@@ -1,0 +1,4 @@
+Django==5.2
+# Optional Gemini client - only needed if you want real Gemini responses
+google-generative-ai>=0.0.0
+python-dotenv>=1.0.0
