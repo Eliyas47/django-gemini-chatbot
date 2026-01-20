@@ -122,3 +122,28 @@ def debug_context(request):
         "context_messages": len(history),
         "history": history
     })
+@api_view(['GET'])
+@authentication_classes([TokenAuthentication])
+@permission_classes([IsAuthenticated])
+def chat_history(request):
+    """
+    Return full chat history for the logged-in user
+    """
+    messages = ChatMessage.objects.filter(
+        user=request.user
+    ).order_by("timestamp")
+
+    history = [
+        {
+            "role": msg.role,
+            "content": msg.content,
+            "timestamp": msg.timestamp
+        }
+        for msg in messages
+    ]
+
+    return Response({
+        "user": request.user.username,
+        "total_messages": len(history),
+        "history": history
+    })

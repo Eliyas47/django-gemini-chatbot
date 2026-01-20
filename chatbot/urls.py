@@ -1,11 +1,16 @@
-# chatbot/urls.py
 from django.urls import path
-from .views import chat, register, login, chat_info, debug_context  # Changed from debug_auth to debug_context
+from .views import (
+    chat,
+    login,
+    register,
+    chat_info,
+    debug_context
+)
 
 urlpatterns = [
-    path('chat/', chat, name='chat'),
-    path('chat/info/', chat_info, name='chat_info'),
-    path('chat/debug/', debug_context, name='debug_context'),  # Changed here
-    path('register/', register, name='register'),
-    path('login/', login, name='login'),
+    path("chat/", chat),
+    path("login/", login),
+    path("register/", register),
+    path("info/", chat_info),
+    path("debug-context/", debug_context),
 ]
