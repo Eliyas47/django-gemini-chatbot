@@ -132,3 +132,14 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     print("⚠️ WARNING: GEMINI_API_KEY not set. Using TEST KEY for development.")
     GEMINI_API_KEY = "TEST_KEY"
+
+
+REST_FRAMEWORK = {
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'user': '30/minute',
+    }
+}
+# -------------------------------
