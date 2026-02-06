@@ -1,6 +1,8 @@
 from django.urls import path
 from .views import (
+    FileUploadChatView,
     chat,
+    chat_stream,
     delete_conversation,
     login,
     regenerate_response,
@@ -23,6 +25,8 @@ urlpatterns = [
     path("conversations/<int:conversation_id>/delete/", delete_conversation),
     path("conversations/<int:conversation_id>/rename/", rename_conversation),
     path("chat/regenerate/", regenerate_response),
+    path("chat/stream/", chat_stream),
+    path("chat/upload/", FileUploadChatView.as_view(), name="chat-upload")
 
 ]
 

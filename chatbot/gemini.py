@@ -1,35 +1,115 @@
-import google.genai as genai
+import os
+from google import genai
+from google.genai import types
 from django.conf import settings
 
-# Use GEMINI_API_KEY from settings
-API_KEY = settings.GEMINI_API_KEY
 
-if API_KEY == "TEST_KEY":
-    print("⚠️ Running Gemini in test mode")
-    class MockClient:
-        class models:
-            @staticmethod
-            def generate_content(model, contents):
-                class Response:
-                    text = "Mock response: GEMINI_API_KEY not set."
-                return Response()
-    client = MockClient()
-else:
-    client = genai.Client(api_key=API_KEY)
+# Initialize client
+client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
 
-def ask_gemini(history):
-    conversation = "\n".join(
-        f"{msg['role'].title()}: {msg['content']}" for msg in history
-    )
-    prompt = f"Continue this conversation:\n{conversation}\nAssistant:" if history else ""
-    
+# ==============================
+# 1️⃣ Normal Response Function
+# ==============================
+def ask_gemini(messages, temperature=0.7):
     try:
+        model_id = "gemini-2.5-flash"
+
+        formatted_contents = [
+            types.Content(
+                role=msg["role"],
+                parts=[types.Part.from_text(text=msg["content"])]
+            )
+            for msg in messages
+        ]
+
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
+            model=model_id,
+            contents=formatted_contents,
+            config=types.GenerateContentConfig(
+                temperature=temperature
+            )
+        )
+
+        return response.text
+
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+# ==============================
+# 2️⃣ Streaming Response Function
+# ==============================
+def ask_gemini_stream(messages, temperature=0.7):
+    try:
+        model_id = "gemini-2.5-flash"
+
+        formatted_contents = [
+            types.Content(
+                role=msg["role"],
+                parts=[types.Part.from_text(text=msg["content"])]
+            )
+            for msg in messages
+        ]
+
+        stream = client.models.generate_content_stream(
+            model=model_id,
+            contents=formatted_contents,
+            config=types.GenerateContentConfig(
+                temperature=temperature
+            )
+        )
+
+        for chunk in stream:
+            if chunk.text:
+                yield chunk.text
+
+    except Exception as e:
+        yield f"Error: {str(e)}"
+
+
+# ==============================
+# 3️⃣ File Analysis Function (NEW)
+# ==============================
+def ask_gemini_file(file_bytes, prompt):
+    try:
+        model_id = "gemini-2.5-flash" # Use a valid model ID
+
+        response = client.models.generate_content(
+            model=model_id,
+            # ADD THIS CONFIG BLOCK
+            config=types.GenerateContentConfig(
+                system_instruction="Reply in plain text only. Do not use markdown formatting like **bold** or *italics*."
+            ),
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_bytes(
+                            data=file_bytes,
+                            mime_type="application/pdf"
+                        ),
+                        types.Part.from_text(text=prompt)
+                    ]
+                )
+            ]
         )
         return response.text
     except Exception as e:
-        print(f"Gemini error: {e}")
         return f"Error: {str(e)}"
+    
+def summarize_conversation(messages):
+    prompt = [
+        {
+            "role": "user",
+            "content": f"""
+Summarize this conversation briefly to preserve memory context.
+Focus on key topics and decisions only.
+
+Conversation:
+{messages}
+"""
+        }
+    ]
+
+    return ask_gemini(prompt)
