@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+import dj_database_url
 
 # -------------------------------
 # BASE DIRECTORY
@@ -37,6 +38,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'chatbot',
+    'corsheaders',
+    'drf_yasg',
 ]
 
 # -------------------------------
@@ -50,6 +53,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
 
 # -------------------------------
@@ -146,3 +150,4 @@ REST_FRAMEWORK = {
 # -------------------------------
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+CORS_ALLOW_ALL_ORIGINS = True

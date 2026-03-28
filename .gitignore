@@ -17,3 +17,5 @@ staticfiles/
 
 # VS Code
 .vscode/
+
+media/
