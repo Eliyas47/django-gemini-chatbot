@@ -158,11 +158,13 @@ else:
     db_ssl_required = db_ssl_required.lower() == "true"
 
 if DATABASE_URL:
+    db_conn_max_age = int(os.getenv("DB_CONN_MAX_AGE", "60"))
     database_config = dj_database_url.parse(
         DATABASE_URL,
-        conn_max_age=600,
+        conn_max_age=db_conn_max_age,
         ssl_require=db_ssl_required,
     )
+    database_config["CONN_HEALTH_CHECKS"] = True
     options = database_config.setdefault("OPTIONS", {})
     if db_ssl_required:
         options.setdefault("sslmode", "require")
