@@ -27,7 +27,7 @@ else:
 # SECURITY
 # -------------------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback-secret-key-for-dev")
-DEBUG = os.getenv("DEBUG", "False") == "True"
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = ["*"]
 
 # -------------------------------
@@ -125,6 +125,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'EXCEPTION_HANDLER': 'chatbot.exceptions.api_exception_handler',
 }
 
 # -------------------------------
@@ -144,18 +145,34 @@ CORS_ALLOW_ALL_ORIGINS = True
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Render can provide either SSL or non-SSL Postgres URLs depending on networking.
-# Toggle via env var without changing code.
-db_ssl_required = os.getenv("DB_SSL_REQUIRED", "False").lower() == "true"
+# Never expose Django debug pages in production unless explicitly forced.
+if DATABASE_URL and os.getenv("FORCE_DEBUG_IN_PROD", "False").lower() != "true":
+    DEBUG = False
+
+# Render Postgres commonly requires SSL. Keep local sqlite unaffected and allow
+# overriding through DB_SSL_REQUIRED when needed.
+db_ssl_required = os.getenv("DB_SSL_REQUIRED")
+if db_ssl_required is None:
+    db_ssl_required = bool(DATABASE_URL)
+else:
+    db_ssl_required = db_ssl_required.lower() == "true"
 
 if DATABASE_URL:
-    DATABASES = {
-        "default": dj_database_url.config(
-            default=DATABASE_URL,
-            conn_max_age=600,
-            ssl_require=db_ssl_required,
-        )
-    }
+    database_config = dj_database_url.parse(
+        DATABASE_URL,
+        conn_max_age=600,
+        ssl_require=db_ssl_required,
+    )
+    options = database_config.setdefault("OPTIONS", {})
+    if db_ssl_required:
+        options.setdefault("sslmode", "require")
+    # Improve resiliency for intermittent network hiccups.
+    options.setdefault("connect_timeout", 10)
+    options.setdefault("keepalives", 1)
+    options.setdefault("keepalives_idle", 30)
+    options.setdefault("keepalives_interval", 10)
+    options.setdefault("keepalives_count", 5)
+    DATABASES = {"default": database_config}
 else:
     DATABASES = {
         "default": {
