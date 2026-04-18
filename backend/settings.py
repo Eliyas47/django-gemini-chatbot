@@ -143,9 +143,18 @@ MEDIA_ROOT = BASE_DIR / "media"
 CORS_ALLOW_ALL_ORIGINS = True
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Render can provide either SSL or non-SSL Postgres URLs depending on networking.
+# Toggle via env var without changing code.
+db_ssl_required = os.getenv("DB_SSL_REQUIRED", "False").lower() == "true"
+
 if DATABASE_URL:
     DATABASES = {
-        "default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)
+        "default": dj_database_url.config(
+            default=DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=db_ssl_required,
+        )
     }
 else:
     DATABASES = {

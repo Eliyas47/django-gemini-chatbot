@@ -1,4 +1,4 @@
-from functools import cache
+from django.core.cache import cache
 from pyexpat.errors import messages
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
