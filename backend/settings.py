@@ -146,7 +146,8 @@ CORS_ALLOW_ALL_ORIGINS = True
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Never expose Django debug pages in production unless explicitly forced.
-if DATABASE_URL and os.getenv("FORCE_DEBUG_IN_PROD", "False").lower() != "true":
+is_hosted_runtime = bool(os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"))
+if (DATABASE_URL or is_hosted_runtime) and os.getenv("FORCE_DEBUG_IN_PROD", "False").lower() != "true":
     DEBUG = False
 
 # Render Postgres commonly requires SSL. Keep local sqlite unaffected and allow
