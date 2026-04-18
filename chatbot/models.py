@@ -44,7 +44,6 @@ class ChatMessage(models.Model):
     )
 
     timestamp = models.DateTimeField(default=timezone.now)
-    file = models.FileField(upload_to="chat_files/", null=True, blank=True)
 
     class Meta:
         ordering = ["timestamp"]

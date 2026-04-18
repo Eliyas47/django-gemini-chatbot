@@ -4,6 +4,12 @@ import os
 from dotenv import load_dotenv
 import dj_database_url
 
+try:
+    import whitenoise  # noqa: F401
+    WHITE_NOISE_INSTALLED = True
+except ImportError:
+    WHITE_NOISE_INSTALLED = False
+
 # -------------------------------
 # BASE DIRECTORY
 # -------------------------------
@@ -23,7 +29,7 @@ else:
 # -------------------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback-secret-key-for-dev")
 DEBUG = os.getenv("DEBUG", "False") == "True"
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 # -------------------------------
 # APPLICATIONS
@@ -48,13 +54,16 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
 ]
+
+if WHITE_NOISE_INSTALLED:
+    MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
 # -------------------------------
 # URLS & TEMPLATES
@@ -109,9 +118,9 @@ USE_TZ = True
 # -------------------------------
 # STATIC FILES
 # -------------------------------
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# -------------------------------
 # DEFAULT AUTO FIELD
 # -------------------------------
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -125,7 +134,7 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.AllowAny',
+        'rest_framework.permissions.IsAuthenticated',
     ),
 }
 
@@ -137,17 +146,25 @@ if not GEMINI_API_KEY:
     print("⚠️ WARNING: GEMINI_API_KEY not set. Using TEST KEY for development.")
     GEMINI_API_KEY = "TEST_KEY"
 
-
-REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
-    ],
-    'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
-    ],
-}
-
+# -------------------------------
+# MEDIA / CORS / DATABASE
 # -------------------------------
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 CORS_ALLOW_ALL_ORIGINS = True
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.config(default=DATABASE_URL, conn_max_age=600)
+    }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": 'django.db.backends.sqlite3',
+            "NAME": BASE_DIR / 'db.sqlite3',
+        }
+    }
+
+if WHITE_NOISE_INSTALLED:
+    STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"

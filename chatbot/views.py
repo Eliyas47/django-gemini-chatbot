@@ -4,13 +4,14 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from datetime import datetime
 
 from .models import Conversation, ChatMessage
-from .gemini import ask_gemini
+from .gemini import ask_gemini, generate_conversation_title
 from django.http import StreamingHttpResponse
 from .gemini import ask_gemini_stream
 from rest_framework.views import APIView
@@ -22,6 +23,47 @@ from rest_framework.permissions import AllowAny
 from django.http import StreamingHttpResponse
 from .gemini import ask_gemini_stream
 import json
+
+
+def serialize_user(user):
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+    }
+
+
+class LenientTokenAuthentication(TokenAuthentication):
+    def authenticate(self, request):
+        try:
+            return super().authenticate(request)
+        except AuthenticationFailed:
+            return None
+
+
+def get_chat_user(request):
+    if request.user and request.user.is_authenticated:
+        return request.user
+
+    guest_user, created = User.objects.get_or_create(
+        username="ella_guest",
+        defaults={"email": "guest@ella.local"},
+    )
+    if created:
+        guest_user.set_unusable_password()
+        guest_user.save(update_fields=["password"])
+    return guest_user
+
+
+def clean_conversation_title(raw_title, fallback):
+    title = (raw_title or '').replace('"', '').replace("'", '').replace('*', '').replace('\n', ' ').strip()
+    title = title.replace('Here are a few options:', '').replace('Title:', '').strip(' -:')
+    parts = [p.strip() for p in title.split() if p.strip()]
+    if len(parts) > 6:
+        title = ' '.join(parts[:6])
+    if len(title) < 3:
+        return fallback
+    return title[:60]
 
 # ----------------------------------------
 # INFO
@@ -42,7 +84,8 @@ def chat_info(request):
 @authentication_classes([])   # disable authentication
 @permission_classes([AllowAny])
 def register(request):
-    username = request.data.get("username")
+    username = (request.data.get("username") or request.data.get("email") or "").strip()
+    email = (request.data.get("email") or username).strip()
     password = request.data.get("password")
 
     if not username or not password:
@@ -51,8 +94,12 @@ def register(request):
     if User.objects.filter(username=username).exists():
         return Response({"error": "Username already exists"}, status=400)
 
-    user = User.objects.create_user(username=username, password=password)
-    return Response({"message": "User created"}, status=201)
+    if email and User.objects.filter(email=email).exists():
+        return Response({"error": "Email already exists"}, status=400)
+
+    user = User.objects.create_user(username=username, email=email, password=password)
+    token, _ = Token.objects.get_or_create(user=user)
+    return Response({"message": "User created", "token": token.key, "user": serialize_user(user)}, status=201)
 
 
 # ----------------------------------------
@@ -62,36 +109,49 @@ def register(request):
 @authentication_classes([])
 @permission_classes([AllowAny])
 def login(request):
+    identifier = (request.data.get("username") or request.data.get("email") or "").strip()
+    password = request.data.get("password")
+
+    if not identifier or not password:
+        return Response({"error": "Username and password required"}, status=400)
+
     user = authenticate(
-        username=request.data.get("username"),
-        password=request.data.get("password")
+        username=identifier,
+        password=password
     )
+
+    if not user and "@" in identifier:
+        try:
+            email_user = User.objects.get(email=identifier)
+            user = authenticate(username=email_user.username, password=password)
+        except User.DoesNotExist:
+            user = None
 
     if not user:
         return Response({"error": "Invalid credentials"}, status=401)
 
     token, _ = Token.objects.get_or_create(user=user)
-    return Response({"token": token.key})
+    return Response({"token": token.key, "user": serialize_user(user)})
 
 
 # ----------------------------------------
 # CREATE CONVERSATION
 # ----------------------------------------
 @api_view(['POST'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def create_conversation(request):
     title = request.data.get("title", "New Chat")
 
     conversation = Conversation.objects.create(
-        user=request.user,
+        user=get_chat_user(request),
         title=title
     )
 
     return Response({
         "conversation_id": conversation.id,
         "title": conversation.title,
-        "created_at": conversation.created_at
+        "created_at": conversation.created_at,
     })
 
 
@@ -99,22 +159,23 @@ def create_conversation(request):
 # LIST USER CONVERSATIONS
 # ----------------------------------------
 @api_view(['GET'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def list_conversations(request):
-    conversations = Conversation.objects.filter(user=request.user)
+    conversations = Conversation.objects.filter(user=get_chat_user(request))
 
     data = [
         {
             "id": c.id,
             "title": c.title,
-            "created_at": c.created_at
+            "created_at": c.created_at,
+            "total_messages": c.messages.count(),
         }
         for c in conversations
     ]
 
     return Response({
-        "user": request.user.username,
+        "user": get_chat_user(request).username,
         "conversations": data
     })
 
@@ -123,8 +184,8 @@ def list_conversations(request):
 # CHAT (SEND MESSAGE)
 # ----------------------------------------
 @api_view(['POST'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def chat(request):
     # 1. Get initial data
     message = request.data.get("message")
@@ -139,7 +200,7 @@ def chat(request):
 
     # 3. Retrieve Conversation (and verify owner)
     try:
-        conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+        conversation = Conversation.objects.get(id=conversation_id, user=get_chat_user(request))
     except Conversation.DoesNotExist:
         return Response({"error": "Conversation not found"}, status=404)
 
@@ -162,12 +223,9 @@ def chat(request):
     
     # 7. Generate Title for new conversations
     if conversation.messages.filter(role="user").count() == 1:
-        title_prompt = [{"role": "user", "content": f"Summarize this into 4-6 words title only: {message}"}]
-        short_title = ask_gemini(title_prompt)
-        
-        # Clean the title
-        clean_title = short_title.replace('"', '').replace('*', '').replace('\n', '').strip()
-        conversation.title = clean_title[:60]
+        short_title = generate_conversation_title(message, ai_response)
+        fallback_title = " ".join(message.split()[:6]) or "New Chat"
+        conversation.title = clean_conversation_title(short_title, fallback_title)
     
     conversation.save()
 
@@ -177,7 +235,7 @@ def chat(request):
         role="model",
         content=ai_response
     )
-    user_key = f"rate_limit_{request.user.id}"
+    user_key = f"rate_limit_{get_chat_user(request).id}"
     request_count = cache.get(user_key, 0)
 
     if request_count > 50:
@@ -205,36 +263,15 @@ def chat(request):
         # Delete old messages to free up DB space and context window
         ChatMessage.objects.filter(id__in=[m.id for m in old_messages]).delete()
 
-    return Response({"message": ai_response, "title": conversation.title})    # Get last 20 messages
-    messages = ChatMessage.objects.filter(
-        conversation=conversation
-    ).order_by("timestamp")[:20]
-
-    history = [
-        {"role": m.role, 
-         "content": m.content}
-        for m in messages
-    ]
-
-    # Ask Gemini for reply
-    ai_response = ask_gemini(history)
-
-    if ai_response.startswith("Error"):
-        return Response({"error": ai_response}, status=502)
-
-    # Save AI reply
-    ChatMessage.objects.create(
-        conversation=conversation,
-        role="model",
-        content=ai_response
-    )
+    conversation.total_messages = conversation.messages.count()
+    conversation.save(update_fields=["title", "total_tokens", "total_messages"])
 
     return Response({
         "conversation_id": conversation.id,
-        "user_message": message,
+        "message": ai_response,
         "ai_response": ai_response,
-        "timestamp": datetime.utcnow(),
-        "history_length": len(history)
+        "reply": ai_response,
+        "title": conversation.title,
     })
 
 
@@ -243,14 +280,14 @@ def chat(request):
 # GET MESSAGES FROM A CONVERSATION
 # ----------------------------------------
 @api_view(['GET'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def get_conversation_messages(request, conversation_id):
 
     try:
         conversation = Conversation.objects.get(
             id=conversation_id,
-            user=request.user
+            user=get_chat_user(request)
         )
     except Conversation.DoesNotExist:
         return Response({"error": "Conversation not found"}, status=404)
@@ -261,6 +298,7 @@ def get_conversation_messages(request, conversation_id):
 
     data = [
         {
+            "id": m.id,
             "role": m.role,
             "content": m.content,
             "timestamp": m.timestamp
@@ -275,13 +313,13 @@ def get_conversation_messages(request, conversation_id):
         "messages": data
     })
 @api_view(['DELETE'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def delete_conversation(request, conversation_id):
     try:
         conversation = Conversation.objects.get(
             id=conversation_id,
-            user=request.user
+            user=get_chat_user(request)
         )
     except Conversation.DoesNotExist:
         return Response({"error": "Conversation not found"}, status=404)
@@ -290,8 +328,8 @@ def delete_conversation(request, conversation_id):
 
     return Response({"message": "Conversation deleted successfully"})
 @api_view(['PATCH'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def rename_conversation(request, conversation_id):
     new_title = request.data.get("title")
 
@@ -301,7 +339,7 @@ def rename_conversation(request, conversation_id):
     try:
         conversation = Conversation.objects.get(
             id=conversation_id,
-            user=request.user
+            user=get_chat_user(request)
         )
     except Conversation.DoesNotExist:
         return Response({"error": "Conversation not found"}, status=404)
@@ -317,12 +355,12 @@ def rename_conversation(request, conversation_id):
 
 
 @api_view(['GET'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def list_conversations(request):
     search_query = request.GET.get("search")
 
-    conversations = Conversation.objects.filter(user=request.user)
+    conversations = Conversation.objects.filter(user=get_chat_user(request))
 
     if search_query:
         conversations = conversations.filter(title__icontains=search_query)
@@ -339,14 +377,14 @@ def list_conversations(request):
     ]
 
     return Response({
-        "user": request.user.username,
+        "user": get_chat_user(request).username,
         "total": len(data),
         "conversations": data
     })
 
 @api_view(['POST'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def regenerate_response(request):
     conversation_id = request.data.get("conversation_id")
 
@@ -356,7 +394,7 @@ def regenerate_response(request):
     try:
         conversation = Conversation.objects.get(
             id=conversation_id,
-            user=request.user
+            user=get_chat_user(request)
         )
     except Conversation.DoesNotExist:
         return Response({"error": "Conversation not found"}, status=404)
@@ -408,8 +446,8 @@ import json
 
 # Authenticated streaming chat
 @api_view(['POST'])
-@authentication_classes([TokenAuthentication])
-@permission_classes([IsAuthenticated])
+@authentication_classes([LenientTokenAuthentication])
+@permission_classes([AllowAny])
 def chat_stream(request):
     message = request.data.get("message")
     conversation_id = request.data.get("conversation_id")
@@ -420,7 +458,7 @@ def chat_stream(request):
         return Response({"error": "conversation_id is required"}, status=400)
 
     try:
-        conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+        conversation = Conversation.objects.get(id=conversation_id, user=get_chat_user(request))
     except Conversation.DoesNotExist:
         return Response({"error": "Conversation not found"}, status=404)
 
@@ -491,8 +529,8 @@ from django.core.cache import cache
 
 class FileUploadChatView(APIView):
     parser_classes = (MultiPartParser, FormParser)
-    authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [LenientTokenAuthentication]
+    permission_classes = [AllowAny]
 
     def post(self, request):
         conversation_id = request.data.get("conversation_id")
@@ -502,7 +540,7 @@ class FileUploadChatView(APIView):
         if not file or not conversation_id:
             return Response({"error": "file and conversation_id are required"}, status=400)
 
-        conversation = get_object_or_404(Conversation, id=conversation_id, user=request.user)
+        conversation = get_object_or_404(Conversation, id=conversation_id, user=get_chat_user(request))
 
         # 1. MIME TYPE FIXER logic
         # Gemini is picky about 'application/msword'. 
@@ -557,7 +595,10 @@ class FileUploadChatView(APIView):
                 content=ai_text
             )
 
-            return Response({"analysis": ai_text})
+            conversation.total_messages = conversation.messages.count()
+            conversation.save(update_fields=["total_messages"])
+
+            return Response({"analysis": ai_text, "conversation_id": conversation.id, "title": conversation.title})
 
         except Exception as e:
             return Response({"error": f"AI Processing Error: {str(e)}"}, status=500)

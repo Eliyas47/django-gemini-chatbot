@@ -113,3 +113,25 @@ Conversation:
     ]
 
     return ask_gemini(prompt)
+
+
+def generate_conversation_title(user_message, assistant_reply=None):
+    prompt_text = f"""
+Create a short, generic chat title in 4-6 words.
+
+Rules:
+- Output only the title text.
+- No bullets, numbering, labels, quotes, or markdown.
+- Do not repeat the full sentence.
+- Make it general and topic-based.
+
+User message:
+{user_message}
+
+Assistant reply:
+{assistant_reply or ''}
+""".strip()
+
+    return ask_gemini([
+        {"role": "user", "content": prompt_text}
+    ], temperature=0.2)
