@@ -1,14 +1,13 @@
 # backend/settings.py
 from pathlib import Path
+from importlib.util import find_spec
 import os
 from dotenv import load_dotenv
 import dj_database_url
 
-try:
-    import whitenoise  # noqa: F401
-    WHITE_NOISE_INSTALLED = True
-except ImportError:
-    WHITE_NOISE_INSTALLED = False
+# Avoid importing optional dependency directly to keep Pylance happy
+# when whitenoise is not installed in the active environment.
+WHITE_NOISE_INSTALLED = find_spec("whitenoise") is not None
 
 # -------------------------------
 # BASE DIRECTORY
@@ -86,16 +85,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'backend.wsgi.application'
-
-# -------------------------------
-# DATABASE
-# -------------------------------
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
 
 # -------------------------------
 # PASSWORD VALIDATION
