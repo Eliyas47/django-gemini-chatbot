@@ -159,7 +159,7 @@ else:
     db_ssl_required = db_ssl_required.lower() == "true"
 
 if DATABASE_URL:
-    db_conn_max_age = int(os.getenv("DB_CONN_MAX_AGE", "60"))
+    db_conn_max_age = int(os.getenv("DB_CONN_MAX_AGE", "0"))
     database_config = dj_database_url.parse(
         DATABASE_URL,
         conn_max_age=db_conn_max_age,

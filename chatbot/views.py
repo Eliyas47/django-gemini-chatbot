@@ -1,6 +1,7 @@
 from django.core.cache import cache
 from pyexpat.errors import messages
 from django.db.utils import OperationalError
+from django.db import close_old_connections, connections
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -66,6 +67,23 @@ def clean_conversation_title(raw_title, fallback):
         return fallback
     return title[:60]
 
+
+def run_with_db_retry(operation, retries=1):
+    """Retry once after resetting stale DB connections."""
+    last_error = None
+    for _ in range(retries + 1):
+        try:
+            return operation()
+        except OperationalError as exc:
+            last_error = exc
+            close_old_connections()
+            try:
+                connections["default"].connect()
+            except Exception:
+                # Reconnection may still fail if DB is genuinely unavailable.
+                pass
+    raise last_error
+
 # ----------------------------------------
 # INFO
 # ----------------------------------------
@@ -86,22 +104,25 @@ def chat_info(request):
 @permission_classes([AllowAny])
 def register(request):
     try:
-        username = (request.data.get("username") or request.data.get("email") or "").strip()
-        email = (request.data.get("email") or username).strip()
-        password = request.data.get("password")
+        def perform_register():
+            username = (request.data.get("username") or request.data.get("email") or "").strip()
+            email = (request.data.get("email") or username).strip()
+            password = request.data.get("password")
 
-        if not username or not password:
-            return Response({"error": "Username and password required"}, status=400)
+            if not username or not password:
+                return Response({"error": "Username and password required"}, status=400)
 
-        if User.objects.filter(username=username).exists():
-            return Response({"error": "Username already exists"}, status=400)
+            if User.objects.filter(username=username).exists():
+                return Response({"error": "Username already exists"}, status=400)
 
-        if email and User.objects.filter(email=email).exists():
-            return Response({"error": "Email already exists"}, status=400)
+            if email and User.objects.filter(email=email).exists():
+                return Response({"error": "Email already exists"}, status=400)
 
-        user = User.objects.create_user(username=username, email=email, password=password)
-        token, _ = Token.objects.get_or_create(user=user)
-        return Response({"message": "User created", "token": token.key, "user": serialize_user(user)}, status=201)
+            user = User.objects.create_user(username=username, email=email, password=password)
+            token, _ = Token.objects.get_or_create(user=user)
+            return Response({"message": "User created", "token": token.key, "user": serialize_user(user)}, status=201)
+
+        return run_with_db_retry(perform_register)
     except OperationalError:
         return Response(
             {"error": "Database connection temporarily unavailable. Please retry in a few seconds."},
@@ -117,29 +138,32 @@ def register(request):
 @permission_classes([AllowAny])
 def login(request):
     try:
-        identifier = (request.data.get("username") or request.data.get("email") or "").strip()
-        password = request.data.get("password")
+        def perform_login():
+            identifier = (request.data.get("username") or request.data.get("email") or "").strip()
+            password = request.data.get("password")
 
-        if not identifier or not password:
-            return Response({"error": "Username and password required"}, status=400)
+            if not identifier or not password:
+                return Response({"error": "Username and password required"}, status=400)
 
-        user = authenticate(
-            username=identifier,
-            password=password
-        )
+            user = authenticate(
+                username=identifier,
+                password=password
+            )
 
-        if not user and "@" in identifier:
-            try:
-                email_user = User.objects.get(email=identifier)
-                user = authenticate(username=email_user.username, password=password)
-            except User.DoesNotExist:
-                user = None
+            if not user and "@" in identifier:
+                try:
+                    email_user = User.objects.get(email=identifier)
+                    user = authenticate(username=email_user.username, password=password)
+                except User.DoesNotExist:
+                    user = None
 
-        if not user:
-            return Response({"error": "Invalid credentials"}, status=401)
+            if not user:
+                return Response({"error": "Invalid credentials"}, status=401)
 
-        token, _ = Token.objects.get_or_create(user=user)
-        return Response({"token": token.key, "user": serialize_user(user)})
+            token, _ = Token.objects.get_or_create(user=user)
+            return Response({"token": token.key, "user": serialize_user(user)})
+
+        return run_with_db_retry(perform_login)
     except OperationalError:
         return Response(
             {"error": "Database connection temporarily unavailable. Please retry in a few seconds."},
