@@ -1,6 +1,6 @@
 from django.core.cache import cache
 from pyexpat.errors import messages
-from django.db.utils import OperationalError
+from django.db.utils import OperationalError, ProgrammingError, DatabaseError
 from django.db import close_old_connections, connections
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.response import Response
@@ -178,18 +178,29 @@ def login(request):
 @authentication_classes([LenientTokenAuthentication])
 @permission_classes([AllowAny])
 def create_conversation(request):
-    title = request.data.get("title", "New Chat")
+    try:
+        title = request.data.get("title", "New Chat")
 
-    conversation = Conversation.objects.create(
-        user=get_chat_user(request),
-        title=title
-    )
+        conversation = Conversation.objects.create(
+            user=get_chat_user(request),
+            title=title
+        )
 
-    return Response({
-        "conversation_id": conversation.id,
-        "title": conversation.title,
-        "created_at": conversation.created_at,
-    })
+        return Response({
+            "conversation_id": conversation.id,
+            "title": conversation.title,
+            "created_at": conversation.created_at,
+        })
+    except ProgrammingError:
+        return Response(
+            {"error": "Database schema is not ready. Run migrations and retry."},
+            status=503,
+        )
+    except (OperationalError, DatabaseError):
+        return Response(
+            {"error": "Database connection temporarily unavailable. Please retry in a few seconds."},
+            status=503,
+        )
 
 
 # ----------------------------------------
