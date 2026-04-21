@@ -1,3 +1,3 @@
 release: python manage.py migrate --noinput
-web: gunicorn backend.wsgi:application
+web: python manage.py migrate --noinput && gunicorn backend.wsgi:application
 

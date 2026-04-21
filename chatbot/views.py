@@ -123,7 +123,12 @@ def register(request):
             return Response({"message": "User created", "token": token.key, "user": serialize_user(user)}, status=201)
 
         return run_with_db_retry(perform_register)
-    except OperationalError:
+    except ProgrammingError:
+        return Response(
+            {"error": "Database schema is not ready. Run migrations and retry."},
+            status=503,
+        )
+    except (OperationalError, DatabaseError):
         return Response(
             {"error": "Database connection temporarily unavailable. Please retry in a few seconds."},
             status=503,
@@ -164,7 +169,12 @@ def login(request):
             return Response({"token": token.key, "user": serialize_user(user)})
 
         return run_with_db_retry(perform_login)
-    except OperationalError:
+    except ProgrammingError:
+        return Response(
+            {"error": "Database schema is not ready. Run migrations and retry."},
+            status=503,
+        )
+    except (OperationalError, DatabaseError):
         return Response(
             {"error": "Database connection temporarily unavailable. Please retry in a few seconds."},
             status=503,
