@@ -143,7 +143,7 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 CORS_ALLOW_ALL_ORIGINS = True
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("postgresql://chatbot_miw1_user:hncRFNgT4Iawl3L6Ttg85yk5OUUdTzWI@dpg-d7iin257vvec73ac91e0-a/chatbot_miw1")
 
 # Never expose Django debug pages in production unless explicitly forced.
 is_hosted_runtime = bool(os.getenv("RENDER") or os.getenv("RENDER_EXTERNAL_URL"))
